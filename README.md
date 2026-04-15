@@ -13,7 +13,7 @@ TestTest
 
 ## Pull изменений
 
-`
+
 git remote add upstream https://github.com/DanilZmievskiy/ML_GaN_Course-IDU_ITMO-2026
 
 git fetch upstream
@@ -21,4 +21,10 @@ git fetch upstream
 git checkout main
 
 git merge upstream/main
-`
+
+
+## Создаем ветку с вашей фамилией
+
+git checkout -b [название_ветки]
+
+Далее коммитим изменения 
