@@ -8,7 +8,7 @@
 TG - @danilzmievskiy
 
 
-TestTest
+[Видеоинструкция по загрузке работ на гит](https://drive.google.com/file/d/1lZBRHNQl7mr_tF2saLpQWd-wbadeIXS0/view?usp=sharing)
 
 
 ## Pull изменений
