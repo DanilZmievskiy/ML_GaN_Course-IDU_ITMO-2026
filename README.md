@@ -8,12 +8,12 @@
 TG - @danilzmievskiy
 
 
-TestTest
+[Видеоинструкция по загрузке работ на гит](https://drive.google.com/file/d/1lZBRHNQl7mr_tF2saLpQWd-wbadeIXS0/view?usp=sharing)
 
 
 ## Pull изменений
 
-`
+
 git remote add upstream https://github.com/DanilZmievskiy/ML_GaN_Course-IDU_ITMO-2026
 
 git fetch upstream
@@ -21,4 +21,10 @@ git fetch upstream
 git checkout main
 
 git merge upstream/main
-`
+
+
+## Создаем ветку с вашей фамилией
+
+git checkout -b [название_ветки]
+
+Далее коммитим изменения 
