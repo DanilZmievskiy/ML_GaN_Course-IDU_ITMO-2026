@@ -17,15 +17,17 @@
 
 ##Файлы в репозитории
 - `emotion_recognition.ipynb` - Jupyter notebook с кодом
-- `emotion_model_final.h5` - обученная модель
 - `model_metrics.json` - метрики модели
+ ## Файл модели (163 MB):
+**Скачать с Google Диска, слишком тяжёлый для гита:** https://drive.google.com/file/d/12Jg45gkQEfE6jK2DEWd_X9SeZiQFauXN/view?usp=sharing
+
 
 # Проверка модели
 ## Нужно:
 1. Скачать датасет FER2013: https://www.kaggle.com/datasets/msambare/fer2013
 2. Открыть `emotion_recognition.ipynb` в Colab
 3. Загрузить датасет (archive.zip)
-4. Загрузить `emotion_model_final.h5`
+4. Скачать модель по ссылке выше и  загрузить `emotion_model_final.h5` в коллаб
 5. Запустить ТОЛЬКО последнюю ячейку (где проверка на валидации), и убедиться что модель работает :)
 
 ##Выводы
