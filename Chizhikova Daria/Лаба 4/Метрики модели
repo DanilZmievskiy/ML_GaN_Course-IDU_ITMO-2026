@@ -1,0 +1,15 @@
+{
+  "accuracy": 0.61,
+  "classes": [
+    "angry",
+    "disgust",
+    "fear",
+    "happy",
+    "neutral",
+    "sad",
+    "surprise"
+  ],
+  "dataset": "FER2013",
+  "image_size": "48x48 grayscale",
+  "architecture": "CNN with fine-tuning"
+}
