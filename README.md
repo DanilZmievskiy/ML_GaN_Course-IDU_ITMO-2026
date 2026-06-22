@@ -7,6 +7,8 @@
 
 TG - @danilzmievskiy
 
+Ведомость можно посмотреть [здесь](https://docs.google.com/spreadsheets/d/12js30mjtUPLmlkECmJ2thGSNiah_WLWvs_zoq5cH3JU/edit?usp=sharing)
+
 
 [Видеоинструкция по загрузке работ на гит](https://drive.google.com/file/d/1lZBRHNQl7mr_tF2saLpQWd-wbadeIXS0/view?usp=sharing)
 
