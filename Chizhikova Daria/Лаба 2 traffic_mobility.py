@@ -9,9 +9,10 @@ Original file is located at
 
 # Лабораторная работа 2: GBDT для задачи Traffic & Mobility на геоданных Санкт-Петербурга
 
+
 # 0. Установка и импорт библиотек
 
-!pip install osmnx geopandas shapely scikit-learn matplotlib contextily mapclassify
+!pip install osmnx geopandas shapely scikit-learn matplotlib contextily mapclassify lightgbm xgboost catboost
 
 import warnings
 warnings.filterwarnings("ignore")
@@ -25,16 +26,23 @@ import matplotlib.pyplot as plt
 
 from shapely.geometry import box, Point
 from sklearn.model_selection import train_test_split, GridSearchCV
-from sklearn.ensemble import HistGradientBoostingRegressor, RandomForestRegressor
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 from sklearn.inspection import permutation_importance
 from sklearn.neighbors import BallTree
+
+# Импорт трёх GBDT моделей
+import lightgbm as lgb
+import xgboost as xgb
+from catboost import CatBoostRegressor
 
 # Настройки OSMnx
 ox.settings.use_cache = True
 ox.settings.log_console = False
 
 print("Библиотеки загружены")
+print(f"LightGBM version: {lgb.__version__}")
+print(f"XGBoost version: {xgb.__version__}")
+
 
 # 1. Область исследования
 
@@ -45,11 +53,14 @@ polygon_wgs = box(*bbox)
 print("Область исследования:")
 print(polygon_wgs)
 
+
 # 2. Загрузка уличной сети из OpenStreetMap
 
+print("\nЗагрузка дорожной сети Санкт-Петербурга...")
+
 G = ox.graph_from_polygon(
-    polygon_wgs,           # polygon_wgs
-    network_type="drive",  # "drive"
+    polygon_wgs,
+    network_type="drive",
     simplify=True,
     retain_all=False
 )
@@ -61,12 +72,14 @@ print(f"Загружено узлов: {len(nodes)}")
 print(f"Загружено рёбер: {len(edges)}")
 edges.head()
 
+
 # 3. Приведение к метрической системе координат
 
 LOCAL_CRS = "EPSG:32636"  # UTM zone 36N для Санкт-Петербурга
 edges_m = edges.to_crs(LOCAL_CRS)
 
 print(f"CRS после преобразования: {edges_m.crs}")
+
 
 # 4. Базовые геометрические признаки дорожных сегментов
 
@@ -84,7 +97,7 @@ def straight_distance(geom):
     coords = list(geom.coords)
     x1, y1 = coords[0]
     x2, y2 = coords[-1]
-    return np.sqrt((x2 - x1)**2 + (y2 - y1)**2)  # евклидово расстояние
+    return np.sqrt((x2 - x1)**2 + (y2 - y1)**2)
 
 roads["straight_dist_m"] = roads.geometry.apply(straight_distance)
 
@@ -107,21 +120,21 @@ print("Статистика геометрических признаков:")
 print(roads[["length_m_geom", "straight_dist_m", "sinuosity", "angle_rad"]].describe())
 
 
-
 # 5. Категориальные признаки дороги
 
 roads["highway_str"] = roads["highway"].apply(lambda x: ",".join(x) if isinstance(x, list) else str(x))
 
 # Создаём dummy-переменные для highway_str
 highway_dummies = pd.get_dummies(roads["highway_str"], prefix="highway")
-
 roads = pd.concat([roads, highway_dummies], axis=1)
 
 print("Создано one-hot признаков для highway:", highway_dummies.shape[1])
 highway_dummies.head()
 
+
 # 6. Загрузка POI и остановок общественного транспорта
 
+print("\nЗагрузка POI и остановок...")
 
 # Теги городских объектов
 poi_tags = {
@@ -145,12 +158,12 @@ stops = ox.features_from_polygon(polygon_wgs, tags=stop_tags)
 print(f"POI загружено: {pois.shape[0]}")
 print(f"Остановок загружено: {stops.shape[0]}")
 
+
 # 7. Подготовка точек POI и остановок
 
 def to_points(gdf, crs_target):
     gdf = gdf.copy()
     gdf = gdf.to_crs(crs_target)
-    # Для полигонов representative_point: точка точно лежит внутри полигона
     gdf["geometry"] = gdf.geometry.representative_point()
     return gdf
 
@@ -165,6 +178,7 @@ stops_m = stops_m[~stops_m.geometry.is_empty & stops_m.geometry.notna()]
 print(f"POI после обработки: {len(pois_m)}")
 print(f"Остановок после обработки: {len(stops_m)}")
 pois_m.head()
+
 
 # 8. Пространственные признаки через BallTree
 
@@ -205,6 +219,7 @@ roads["dist_to_stop_m"], roads["stop_count_300m"] = nearest_and_count(road_point
 print("Статистика пространственных признаков:")
 print(roads[["dist_to_poi_m", "poi_count_300m", "dist_to_stop_m", "stop_count_300m"]].describe())
 
+
 # 9. Графовые признаки дорожной сети
 
 # Сброс индекса для работы с u, v
@@ -219,6 +234,7 @@ roads["mean_node_degree"] = (roads["u_degree"] + roads["v_degree"]) / 2
 
 print("Статистика графовых признаков:")
 print(roads[["u_degree", "v_degree", "mean_node_degree"]].describe())
+
 
 # 10. Формирование учебной целевой переменной
 
@@ -236,8 +252,7 @@ roads["near_stop_norm"] = 1 - minmax(roads["dist_to_stop_m"].clip(upper=roads["d
 rng = np.random.default_rng(42)
 noise = rng.normal(0, 0.05, size=len(roads))
 
-# Формула целевой переменной с подобранными весами
-# Более длинные дороги, с большим количеством POI, остановок и высокой степенью связности имеют более высокую потенциальную нагрузку
+# Формула целевой переменной
 roads["traffic_load_score"] = (
     0.25 * roads["length_norm"] +
     0.20 * roads["poi_count_norm"] +
@@ -256,6 +271,7 @@ print(roads["traffic_load_score"].describe())
 
 
 # 11. Подготовка признаков для модели
+
 # Базовые числовые признаки
 base_features = [
     "length_m_geom",
@@ -281,10 +297,32 @@ feature_cols = base_features + highway_features
 X = roads[feature_cols].replace([np.inf, -np.inf], np.nan).fillna(0)
 y = roads["traffic_load_score"]
 
+#  Очищаем имена признаков от специальных символов
+# LightGBM не поддерживает: [ ] , < > : ; и другие спецсимволы
+def clean_feature_name(name):
+    """Очищает имя признака от символов, которые не поддерживает LightGBM"""
+    # Заменяем проблемные символы на подчеркивания
+    for char in ['[', ']', '(', ')', ',', ';', ':', '<', '>', '/', '\\', '|', '=', '+', '*', '&', '^', '%', '$', '#', '@', '!', '~', '`']:
+        name = name.replace(char, '_')
+    # Убираем множественные подчеркивания
+    while '__' in name:
+        name = name.replace('__', '_')
+    # Убираем подчеркивания в начале и конце
+    name = name.strip('_')
+    return name
+
+# Очищаем имена колонок
+X.columns = [clean_feature_name(col) for col in X.columns]
+
+# Обновляем список признаков после очистки
+feature_cols_cleaned = list(X.columns)
+
 print(f"Признаков: {X.shape[1]}")
 print(f"Объектов: {X.shape[0]}")
-print("\nСписок всех признаков:")
-print(feature_cols[:10], "... +", len(highway_features), "highway-признаков")
+print("\nПервые 10 признаков (очищенные имена):")
+print(feature_cols_cleaned[:10])
+print(f"... + {len([c for c in feature_cols_cleaned if c.startswith('highway_')])} highway-признаков")
+
 
 # 12. Разделение на train/test
 
@@ -295,34 +333,61 @@ X_train, X_test, y_train, y_test = train_test_split(
 print(f"Размер обучающей выборки: {X_train.shape}")
 print(f"Размер тестовой выборки: {X_test.shape}")
 
-# 13. Обучение моделей
 
-# Модель 1: HistGradientBoostingRegressor (базовая)
-model_hgb = HistGradientBoostingRegressor(
-    max_iter=300,
+# 13. Обучение трёх GBDT моделей (Задание 12)
+
+print("\n" + "="*50)
+print("Обучение трёх моделей GBDT")
+print("="*50)
+
+# ---- Модель 1: LightGBM ----
+print("\n1. Обучение LightGBM...")
+model_lgb = lgb.LGBMRegressor(
+    n_estimators=300,
     learning_rate=0.1,
-    max_leaf_nodes=31,
-    min_samples_leaf=20,
-    l2_regularization=0.01,
+    num_leaves=31,
+    min_child_samples=20,
+    subsample=0.8,
+    colsample_bytree=0.8,
     random_state=42,
-    verbose=0
+    n_jobs=-1,
+    verbose=-1
 )
+model_lgb.fit(X_train, y_train)
+print("LightGBM обучен")
 
-model_hgb.fit(X_train, y_train)
-
-# Модель 2: RandomForestRegressor для сравнения
-model_rf = RandomForestRegressor(
-    n_estimators=100,
-    max_depth=15,
-    min_samples_split=10,
-    min_samples_leaf=5,
+# ---- Модель 2: XGBoost ----
+print("\n2. Обучение XGBoost...")
+model_xgb = xgb.XGBRegressor(
+    n_estimators=300,
+    learning_rate=0.1,
+    max_depth=6,
+    min_child_weight=1,
+    subsample=0.8,
+    colsample_bytree=0.8,
     random_state=42,
-    n_jobs=-1
+    n_jobs=-1,
+    verbosity=0
 )
+model_xgb.fit(X_train, y_train)
+print("XGBoost обучен")
 
-model_rf.fit(X_train, y_train)
+# ---- Модель 3: CatBoost ----
+print("\n3. Обучение CatBoost...")
+model_cat = CatBoostRegressor(
+    iterations=300,
+    learning_rate=0.1,
+    depth=6,
+    l2_leaf_reg=1,
+    subsample=0.8,
+    random_seed=42,
+    verbose=False
+)
+model_cat.fit(X_train, y_train)
+print("CatBoost обучен")
 
-# 14. Оценка качества
+
+# 14. Оценка качества моделей (Задание 13)
 
 def evaluate_model(model, X_train, X_test, y_train, y_test, name="Модель"):
     """Оценка модели и вывод метрик"""
@@ -355,83 +420,131 @@ def evaluate_model(model, X_train, X_test, y_train, y_test, name="Модель")
     }
 
 
-print("Результаты оценки моделей")
+print("Результаты оценки трёх моделей")
 
 results = []
-results.append(evaluate_model(model_hgb, X_train, X_test, y_train, y_test, "HistGradientBoosting"))
-results.append(evaluate_model(model_rf, X_train, X_test, y_train, y_test, "RandomForest"))
+results.append(evaluate_model(model_lgb, X_train, X_test, y_train, y_test, "LightGBM"))
+results.append(evaluate_model(model_xgb, X_train, X_test, y_train, y_test, "XGBoost"))
+results.append(evaluate_model(model_cat, X_train, X_test, y_train, y_test, "CatBoost"))
 
 # Сравнение результатов
-print("\n" + "="*50)
+
 print("Сравнение моделей (Test MAE):")
-print("="*50)
+
 for r in sorted(results, key=lambda x: x["mae_test"]):
     print(f"{r['name']}: MAE = {r['mae_test']:.4f}, R² = {r['r2_test']:.4f}")
 
 # Выбираем лучшую модель
-best_model = model_hgb if results[0]["mae_test"] < results[1]["mae_test"] else model_rf
-print(f"\nЛучшая модель: {results[0]['name'] if results[0]['mae_test'] < results[1]['mae_test'] else results[1]['name']}")
+best_model_name = min(results, key=lambda x: x["mae_test"])["name"]
+best_model = {
+    "LightGBM": model_lgb,
+    "XGBoost": model_xgb,
+    "CatBoost": model_cat
+}[best_model_name]
 
-# Задание 14 (настройка гиперпараметров)
+print(f"\nЛучшая модель: {best_model_name}")
 
-print("Настройка гиперпараметров лучшей модели")
 
-# Настройка параметров для HistGradientBoostingRegressor
-param_grid = {
-    'max_iter': [200, 300, 400],
-    'learning_rate': [0.05, 0.1, 0.15],
-    'max_leaf_nodes': [31, 63, 127],
-    'min_samples_leaf': [10, 20, 30],
-    'l2_regularization': [0.0, 0.01, 0.1]
+# Задание 14: Настройка гиперпараметров для лучшей модели
+
+
+
+print(f"Настройка гиперпараметров для {best_model_name}")
+
+def tune_lightgbm():
+    """Настройка LightGBM"""
+    print("\nНастройка LightGBM...")
+    param_grid = {
+        'n_estimators': [200, 300],
+        'learning_rate': [0.05, 0.1],
+        'num_leaves': [31, 63],
+        'min_child_samples': [10, 20]
+    }
+
+    grid_search = GridSearchCV(
+        lgb.LGBMRegressor(random_state=42, n_jobs=-1, verbose=-1),
+        param_grid,
+        cv=3,
+        scoring='neg_mean_absolute_error',
+        n_jobs=-1
+    )
+    grid_search.fit(X_train, y_train)
+    return grid_search.best_params_, grid_search.best_estimator_
+
+def tune_xgboost():
+    """Настройка XGBoost"""
+    print("\nНастройка XGBoost...")
+    param_grid = {
+        'n_estimators': [200, 300],
+        'learning_rate': [0.05, 0.1],
+        'max_depth': [4, 6],
+        'min_child_weight': [1, 3]
+    }
+
+    grid_search = GridSearchCV(
+        xgb.XGBRegressor(random_state=42, n_jobs=-1, verbosity=0),
+        param_grid,
+        cv=3,
+        scoring='neg_mean_absolute_error',
+        n_jobs=-1
+    )
+    grid_search.fit(X_train, y_train)
+    return grid_search.best_params_, grid_search.best_estimator_
+
+def tune_catboost():
+    """Настройка CatBoost"""
+    print("\nНастройка CatBoost...")
+    param_grid = {
+        'iterations': [200, 300],
+        'learning_rate': [0.05, 0.1],
+        'depth': [4, 6],
+        'l2_leaf_reg': [1, 3]
+    }
+
+    grid_search = GridSearchCV(
+        CatBoostRegressor(random_seed=42, verbose=False),
+        param_grid,
+        cv=3,
+        scoring='neg_mean_absolute_error',
+        n_jobs=-1
+    )
+    grid_search.fit(X_train, y_train)
+    return grid_search.best_params_, grid_search.best_estimator_
+
+# Выбираем функцию настройки в зависимости от лучшей модели
+tune_functions = {
+    "LightGBM": tune_lightgbm,
+    "XGBoost": tune_xgboost,
+    "CatBoost": tune_catboost
 }
 
-# Используем меньшую сетку для скорости
-param_grid_small = {
-    'max_iter': [200, 300],
-    'learning_rate': [0.05, 0.1],
-    'max_leaf_nodes': [31, 63],
-}
+best_params, model_optimized = tune_functions[best_model_name]()
+print(f"\nЛучшие параметры для {best_model_name}:")
+for k, v in best_params.items():
+    print(f"  {k}: {v}")
 
-
-grid_search = GridSearchCV(
-    HistGradientBoostingRegressor(random_state=42, verbose=0),
-    param_grid_small,
-    cv=3,
-    scoring='neg_mean_absolute_error',
-    n_jobs=-1,
-    verbose=1
-)
-
-grid_search.fit(X_train, y_train)
-
-print(f"\nЛучшие параметры: {grid_search.best_params_}")
-print(f"Лучший MAE (CV): {-grid_search.best_score_:.4f}")
-
-# Обучаем оптимизированную модель
-model_optimized = grid_search.best_estimator_
+# Оценка оптимизированной модели
 y_test_pred_opt = model_optimized.predict(X_test)
 mae_test_opt = mean_absolute_error(y_test, y_test_pred_opt)
-
-print(f"Тестовый MAE оптимизированной модели: {mae_test_opt:.4f}")
+print(f"\nТестовый MAE оптимизированной модели: {mae_test_opt:.4f}")
 
 # Сравнение с базовой моделью
-if mae_test_opt < results[0]["mae_test"]:
-    print("Оптимизированная модель показала улучшение!")
+baseline_mae = min(r["mae_test"] for r in results)
+if mae_test_opt < baseline_mae:
+    print(f"Оптимизированная модель улучшила результат с {baseline_mae:.4f} до {mae_test_opt:.4f}")
     best_model = model_optimized
 else:
-    print("Базовая модель осталась лучшей")
+    print(f"Базовая модель осталась лучшей (MAE = {baseline_mae:.4f})")
+
+print(f"\nФинальная лучшая модель: {best_model_name}")
 
 
 
 # 15. Важность признаков (Permutation Importance)
-
 print("Анализ важности признаков")
 
-# Используем лучшую модель для анализа важности
-model_for_importance = best_model
-
 perm_importance = permutation_importance(
-    model_for_importance,
+    best_model,
     X_test,
     y_test,
     n_repeats=5,
@@ -452,11 +565,14 @@ plt.figure(figsize=(10, 8))
 top_features = importance_df.head(15).sort_values('importance', ascending=True)
 plt.barh(top_features['feature'], top_features['importance'])
 plt.xlabel('Увеличение MAE при перемешивании признака')
-plt.title('Permutation Importance признаков для прогноза транспортной нагрузки')
+plt.title(f'Permutation Importance признаков ({best_model_name})')
 plt.tight_layout()
 plt.show()
 
-# 16. Прогноз для всех дорожных сегментов и карта
+
+
+# 16. Прогноз для всех дорожных сегментов и карта (Задание 15)
+
 
 print("Визуализация прогноза")
 
@@ -469,7 +585,6 @@ roads_wgs = gpd.GeoDataFrame(roads, geometry="geometry", crs=edges_m.crs).to_crs
 # Создаем карту
 fig, ax = plt.subplots(figsize=(14, 12))
 
-# Рисуем дороги с цветом в зависимости от прогнозируемой нагрузки
 roads_wgs.plot(
     ax=ax,
     column="predicted_traffic_load",
@@ -484,7 +599,7 @@ roads_wgs.plot(
 )
 
 ax.set_title(
-    "Прогноз потенциальной транспортной нагрузки на сегменты дорог\nСанкт-Петербург (центральная часть)",
+    f"Прогноз потенциальной транспортной нагрузки\nСанкт-Петербург (центральная часть)\nМодель: {best_model_name}",
     fontsize=14
 )
 ax.set_xlabel("Долгота")
@@ -493,9 +608,10 @@ ax.axis('on')
 plt.tight_layout()
 plt.show()
 
-# 17. Дополнительная визуализация: сравнение с истинными значениями
 
-print("Дополнительный анализ")
+# 17. Дополнительный анализ ошибок
+
+print("Дополнительный анализ ошибок")
 
 # Сравнение прогноза с истинной целевой переменной для тестовой выборки
 test_result = roads.loc[X_test.index].copy()
@@ -513,7 +629,7 @@ error_by_road_type = test_result.groupby("highway_str").agg({
 error_by_road_type.columns = ["mae", "std_mae", "count", "mean_true", "mean_pred"]
 error_by_road_type = error_by_road_type.sort_values("mae", ascending=False)
 
-print("Ошибка прогноза по типам дорог:")
+print("Ошибка прогноза по типам дорог (топ-10):")
 print(error_by_road_type.head(10))
 
 # Гистограмма ошибок
@@ -521,8 +637,9 @@ plt.figure(figsize=(10, 6))
 plt.hist(test_result["error"], bins=50, edgecolor='black', alpha=0.7)
 plt.xlabel("Абсолютная ошибка")
 plt.ylabel("Количество сегментов")
-plt.title("Распределение ошибок прогноза на тестовой выборке")
-plt.axvline(x=test_result["error"].mean(), color='r', linestyle='--', label=f'Средняя ошибка: {test_result["error"].mean():.3f}')
+plt.title(f"Распределение ошибок прогноза ({best_model_name})")
+plt.axvline(x=test_result["error"].mean(), color='r', linestyle='--',
+            label=f'Средняя ошибка: {test_result["error"].mean():.3f}')
 plt.legend()
 plt.show()
 
@@ -532,12 +649,25 @@ plt.scatter(test_result["y_true"], test_result["y_pred"], alpha=0.3, s=10)
 plt.plot([0, 1], [0, 1], 'r--', label='Идеальное предсказание')
 plt.xlabel("Истинное значение")
 plt.ylabel("Предсказанное значение")
-plt.title("Предсказанные vs Истинные значения нагрузки")
+plt.title(f"Предсказанные vs Истинные значения ({best_model_name})")
 plt.legend()
 plt.show()
 
 
-print("\nИтоговые результаты:")
-print(f"- Лучшая модель: {results[0]['name'] if results[0]['mae_test'] < results[1]['mae_test'] else results[1]['name']}")
-print(f"- Test MAE: {min(results[0]['mae_test'], results[1]['mae_test']):.4f}")
-print(f"- Test R²: {results[0]['r2_test'] if results[0]['mae_test'] < results[1]['mae_test'] else results[1]['r2_test']:.4f}")
+# Итоговые результаты
+
+print("ИТОГОВЫЕ РЕЗУЛЬТАТЫ")
+
+print(f"\nЛучшая модель: {best_model_name}")
+print(f"Test MAE: {min(r['mae_test'] for r in results):.4f}")
+print(f"Test R²: {max(r['r2_test'] for r in results):.4f}")
+
+print("\nСравнение всех моделей:")
+for r in sorted(results, key=lambda x: x["mae_test"]):
+    print(f"  {r['name']}: MAE = {r['mae_test']:.4f}, R² = {r['r2_test']:.4f}")
+
+print("\nТоп-5 важнейших признаков:")
+for i, row in importance_df.head(5).iterrows():
+    print(f"  {row['feature']}: {row['importance']:.4f}")
+
+print("\nЛаба выполнена ура")
